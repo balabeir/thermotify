@@ -35,47 +35,67 @@ type sensor struct {
 	acceptData  int
 }
 
+type mongoInstance struct {
+	Client *mongo.Client
+	Db     *mongo.Database
+}
+
+var mg mongoInstance
+
+const dbName = "thermotify"
+const mongoURI = "mongodb://localhost:27017/" + dbName
+
+func connect() error {
+	// create connect mongo
+	client, err := mongo.NewClient(options.Client().ApplyURI(mongoURI))
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel() // close connection without module
+
+	err = client.Connect(ctx) //connect database
+	if err != nil {
+		return err
+	}
+
+	db := client.Database(dbName)
+
+	mg = mongoInstance{
+		Client: client,
+		Db:     db,
+	}
+	return nil
+}
+
 func main() {
+	if err := connect(); err != nil {
+		log.Fatal(err)
+	}
 
 	app := fiber.New()
 
 	app.Use(logger.New())
 
 	app.Get("/", func(c *fiber.Ctx) error {
-		// create connect mongo
-		client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://localhost:27017"))
+
+		hospitalCollection := mg.Db.Collection("hospitals") // choose collection
+
+		// filter := bson.M{"hospitalId": "111111"}
+		filter := bson.M{}
+
+		cursor, err := hospitalCollection.Find(c.Context(), filter)
 		if err != nil {
 			log.Fatal(err)
 		}
+		defer cursor.Close(c.Context()) // close cursor while not use
 
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		err = client.Connect(ctx) //connect database
-		if err != nil {
+		var hospitalData []bson.M
+		if err = cursor.All(c.Context(), &hospitalData); err != nil {
 			log.Fatal(err)
 		}
-		defer cancel() // close connection without module
 
-		db := client.Database("thermotify")              // use database
-		hospitalCollection := db.Collection("hospitals") // choose collection
-
-		filter := bson.M{"hospitalId": "111111"}
-
-		cursor, err := hospitalCollection.Find(ctx, filter)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer cursor.Close(ctx) // close cursor while not use
-
-		var hospitalData bson.Raw
-		// find all document
-		for cursor.Next(ctx) {
-			var result hospital
-			if err = cursor.Decode(&result); err != nil {
-				log.Fatal(err)
-			}
-			hospitalData = cursor.Current
-
-		}
 		return c.JSON(hospitalData)
 	})
 
