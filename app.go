@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -13,26 +14,26 @@ import (
 )
 
 type hospital struct {
-	_id          string
-	hospitalID   string
-	hospitalName string
-	groupSensor  []group
+	ID           string  `json:"_id,omitempty" bson:"_id,omitempty"`
+	HospitalID   string  `json:"hospitalId" bson:"hospitalId" `
+	HospitalName string  `json:"hospitalName" bson:"hospitalName"`
+	GroupSensor  []group `json:"groupSensor" bson:"groupSensor"`
 }
 
 type group struct {
-	groupID    string
-	groupName  string
-	lineToken  string
-	sensorList []sensor
+	GroupID    string   `json:"groupId" bson:"groupId"`
+	GroupName  string   `json:"groupName" bson:"groupName"`
+	LineToken  string   `json:"lineToken" bson:"lineToken"`
+	SensorList []sensor `json:"sensorList" bson:"sensorList"`
 }
 
 type sensor struct {
-	sensorID    string
-	sensorToken string
-	maxTemp     int
-	minTemp     int
-	notify      int
-	acceptData  int
+	SensorID    string `json:"sensorId" bson:"sensorId"`
+	SensorToken string `json:"sensorToken" bson:"sensorToken"`
+	MaxTemp     int    `json:"maxTemp" bson:"maxTemp"`
+	MinTemp     int    `json:"minTemp" bson:"minTemp"`
+	Notify      int    `json:"notify" bson:"notify"`
+	AcceptData  int    `json:"acceptData" bson:"acceptData"`
 }
 
 type mongoInstance struct {
@@ -78,7 +79,7 @@ func main() {
 
 	app.Use(logger.New())
 
-	app.Get("/", func(c *fiber.Ctx) error {
+	app.Get("/hospitals", func(c *fiber.Ctx) error {
 
 		hospitalCollection := mg.Db.Collection("hospitals") // choose collection
 
@@ -87,17 +88,46 @@ func main() {
 
 		cursor, err := hospitalCollection.Find(c.Context(), filter)
 		if err != nil {
-			log.Fatal(err)
+			return c.Status(fiber.StatusBadRequest).JSON(err)
 		}
 		defer cursor.Close(c.Context()) // close cursor while not use
 
 		var hospitalData []bson.M
 		if err = cursor.All(c.Context(), &hospitalData); err != nil {
-			log.Fatal(err)
+			return c.Status(fiber.StatusBadRequest).JSON(err)
 		}
 
 		return c.JSON(hospitalData)
 	})
 
+	app.Post("/hospital", newHospital)
+
 	app.Listen(":80")
+}
+
+func newHospital(c *fiber.Ctx) error {
+
+	hospitalCollection := mg.Db.Collection("hospitals")
+
+	newHospital := new(hospital)
+	if err := c.BodyParser(newHospital); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
+	}
+	fmt.Println(newHospital)
+
+	newHospital.ID = "" // force MongoDB to always set its own generated ObjectIDs
+	// insert new hospital
+	insertResult, err := hospitalCollection.InsertOne(c.Context(), newHospital)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
+	}
+
+	// get the record has just been inserted
+	// var createdHospital bson.M
+	// filter := bson.D{{Key: "_id", Value: insertResult.InsertedID}}
+	// if err := hospitalCollection.FindOne(c.Context(), filter).Decode(&createdHospital); err != nil {
+	// 	return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
+	// }
+
+	return c.JSON(fiber.Map{"Insert successfully": insertResult.InsertedID})
 }
