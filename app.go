@@ -17,7 +17,7 @@ type hospital struct {
 	ID           string  `json:"_id,omitempty" bson:"_id,omitempty"`
 	HospitalID   string  `json:"hospitalId" bson:"hospitalId" `
 	HospitalName string  `json:"hospitalName" bson:"hospitalName"`
-	GroupSensor  []group `json:"groupSensor" bson:"groupSensor"`
+	GroupSensor  []group `json:"groupSensor,omitempty" bson:"groupSensor,omitempty"`
 }
 
 type group struct {
@@ -79,30 +79,32 @@ func main() {
 
 	app.Use(logger.New())
 
-	app.Get("/hospitals", func(c *fiber.Ctx) error {
-
-		hospitalCollection := mg.Db.Collection("hospitals") // choose collection
-
-		// filter := bson.M{"hospitalId": "111111"}
-		filter := bson.M{}
-
-		cursor, err := hospitalCollection.Find(c.Context(), filter)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(err)
-		}
-		defer cursor.Close(c.Context()) // close cursor while not use
-
-		var hospitalData []bson.M
-		if err = cursor.All(c.Context(), &hospitalData); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(err)
-		}
-
-		return c.JSON(hospitalData)
-	})
-
+	app.Get("/hospitals", getHospitals)
 	app.Post("/hospital", newHospital)
+	app.Put("/hospital", changeHospitalName)
 
 	app.Listen(":80")
+}
+
+func getHospitals(c *fiber.Ctx) error {
+
+	hospitalCollection := mg.Db.Collection("hospitals") // choose collection
+
+	// filter := bson.M{"hospitalId": "111111"}
+	filter := bson.M{}
+
+	cursor, err := hospitalCollection.Find(c.Context(), filter)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err)
+	}
+	defer cursor.Close(c.Context()) // close cursor while not use
+
+	var hospitalData []bson.M
+	if err = cursor.All(c.Context(), &hospitalData); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err)
+	}
+
+	return c.JSON(hospitalData)
 }
 
 func newHospital(c *fiber.Ctx) error {
@@ -113,7 +115,6 @@ func newHospital(c *fiber.Ctx) error {
 	if err := c.BodyParser(newHospital); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
-	fmt.Println(newHospital)
 
 	newHospital.ID = "" // force MongoDB to always set its own generated ObjectIDs
 	// insert new hospital
@@ -130,4 +131,29 @@ func newHospital(c *fiber.Ctx) error {
 	// }
 
 	return c.JSON(fiber.Map{"Insert successfully": insertResult.InsertedID})
+}
+
+func changeHospitalName(c *fiber.Ctx) error {
+	hospitalCollection := mg.Db.Collection("hospitals")
+
+	changeName := new(hospital)
+
+	if err := c.BodyParser(changeName); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
+	}
+
+	fmt.Println("hospitalID =", changeName.HospitalID)
+
+	updateResult, err := hospitalCollection.UpdateOne(
+		c.Context(),
+		bson.M{"hospitalId": changeName.HospitalID},
+		bson.D{
+			{"$set", bson.D{{"hospitalName", changeName.HospitalName}}},
+		},
+	)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
+	}
+
+	return c.JSON(fiber.Map{"update hospital name complete": updateResult})
 }
