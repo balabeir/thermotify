@@ -147,8 +147,8 @@ func changeHospitalName(c *fiber.Ctx) error {
 	updateResult, err := hospitalCollection.UpdateOne(
 		c.Context(),
 		bson.M{"hospitalId": changeName.HospitalID},
-		bson.D{
-			{"$set", bson.D{{"hospitalName", changeName.HospitalName}}},
+		bson.M{
+			"$set": bson.M{"hospitalName": changeName.HospitalName},
 		},
 	)
 	if err != nil {
