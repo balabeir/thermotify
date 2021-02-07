@@ -1,16 +1,14 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+
+	connectdatabase "thermotify/database"
 )
 
 type hospital struct {
@@ -36,75 +34,31 @@ type sensor struct {
 	AcceptData  int    `json:"acceptData" bson:"acceptData"`
 }
 
-type mongoInstance struct {
-	Client *mongo.Client
-	Db     *mongo.Database
-}
-
-var mg mongoInstance
-
-const dbName = "thermotify"
-const mongoURI = "mongodb://localhost:27017/" + dbName
-
-func connect() error {
-	// create connect mongo
-	client, err := mongo.NewClient(options.Client().ApplyURI(mongoURI))
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel() // close connection without module
-
-	err = client.Connect(ctx) //connect database
-	if err != nil {
-		return err
-	}
-
-	db := client.Database(dbName)
-
-	mg = mongoInstance{
-		Client: client,
-		Db:     db,
-	}
-	return nil
-}
+var mg = connectdatabase.Mg
 
 func main() {
-	if err := connect(); err != nil {
+	if err := connectdatabase.Connect(); err != nil {
 		log.Fatal(err)
 	}
+	mg = connectdatabase.Mg
 
 	app := fiber.New()
-
 	app.Use(logger.New())
 
 	app.Get("/hospitals", getHospitals)
 	app.Post("/hospital", newHospital)
 	app.Put("/hospital", changeHospitalName)
 
+	app.Get("/temp", getAllTemp)
+	app.Get("/temp/:sensorId", getSensorTemp)
+
 	app.Listen(":80")
 }
 
 func getHospitals(c *fiber.Ctx) error {
+	hospitalData := find("hospitals", bson.M{}, c)
 
-	hospitalCollection := mg.Db.Collection("hospitals") // choose collection
-
-	// filter := bson.M{"hospitalId": "111111"}
-	filter := bson.M{}
-
-	cursor, err := hospitalCollection.Find(c.Context(), filter)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(err)
-	}
-	defer cursor.Close(c.Context()) // close cursor while not use
-
-	var hospitalData []bson.M
-	if err = cursor.All(c.Context(), &hospitalData); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(err)
-	}
-
-	return c.JSON(hospitalData)
+	return hospitalData
 }
 
 func newHospital(c *fiber.Ctx) error {
@@ -122,13 +76,6 @@ func newHospital(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
 	}
-
-	// get the record has just been inserted
-	// var createdHospital bson.M
-	// filter := bson.D{{Key: "_id", Value: insertResult.InsertedID}}
-	// if err := hospitalCollection.FindOne(c.Context(), filter).Decode(&createdHospital); err != nil {
-	// 	return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
-	// }
 
 	return c.JSON(fiber.Map{"Insert successfully": insertResult.InsertedID})
 }
@@ -156,4 +103,34 @@ func changeHospitalName(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"update hospital name complete": updateResult})
+}
+
+func getSensorTemp(c *fiber.Ctx) error {
+	SensorID := c.Params("sensorId")
+	filter := bson.M{"sensorId": SensorID}
+	tempData := find("tempValue", filter, c)
+
+	return tempData
+}
+
+func getAllTemp(c *fiber.Ctx) error {
+	tempData := find("tempValue", bson.M{}, c)
+	return tempData
+}
+
+func find(collection string, filter bson.M, c *fiber.Ctx) error {
+	dbCollection := mg.Db.Collection(collection) // choose collection
+
+	// filter := bson.M{"hospitalId": "111111"}
+	findFilter := filter
+
+	cursor, err := dbCollection.Find(c.Context(), findFilter)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
+	}
+	var data []bson.M
+	if err = cursor.All(c.Context(), &data); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
+	}
+	return c.JSON(data)
 }

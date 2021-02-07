@@ -1,32 +1,45 @@
-package connectDatabase
+package connectdatabase
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var client *mongo.Client
-var ctx context.Context
-
-func mongoConnect(dbName string) *mongo.Database {
-	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	ctx, _ = context.WithTimeout(context.Background(), 10*time.Second)
-	err = client.Connect(ctx)
-	if err != nil {
-		log.Fatal(err)
-	}
-	db := client.Database(dbName)
-	return db
+type mongoInstance struct {
+	Client *mongo.Client
+	Db     *mongo.Database
 }
 
-func mongoDisconnect() {
-	client.Disconnect(ctx)
+// Mg is mongo Instance
+var Mg mongoInstance
+
+// Connect to mongo database
+func Connect() error {
+	const dbName = "thermotify"
+	const mongoURI = "mongodb://localhost:27017/" + dbName
+
+	// create connect mongo
+	client, err := mongo.NewClient(options.Client().ApplyURI(mongoURI))
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel() // close connection without module
+
+	err = client.Connect(ctx) //connect database
+	if err != nil {
+		return err
+	}
+
+	db := client.Database(dbName)
+
+	Mg = mongoInstance{
+		Client: client,
+		Db:     db,
+	}
+	return nil
 }
