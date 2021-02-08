@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/gofiber/fiber/v2"
@@ -14,20 +13,20 @@ import (
 type hospital struct {
 	ID           string  `json:"_id,omitempty" bson:"_id,omitempty"`
 	HospitalID   string  `json:"hospitalId" bson:"hospitalId" `
-	HospitalName string  `json:"hospitalName" bson:"hospitalName"`
+	HospitalName string  `json:"hospitalName,omitempty" bson:"hospitalName"`
 	GroupSensor  []group `json:"groupSensor,omitempty" bson:"groupSensor,omitempty"`
 }
 
 type group struct {
 	GroupID    string   `json:"groupId" bson:"groupId"`
 	GroupName  string   `json:"groupName" bson:"groupName"`
-	LineToken  string   `json:"lineToken" bson:"lineToken"`
-	SensorList []sensor `json:"sensorList" bson:"sensorList"`
+	LineToken  string   `json:"lineToken,omitempty" bson:"lineToken"`
+	SensorList []sensor `json:"sensorList,omitempty" bson:"sensorList"`
 }
 
 type sensor struct {
-	SensorID    string `json:"sensorId" bson:"sensorId"`
 	SensorToken string `json:"sensorToken" bson:"sensorToken"`
+	SensorName  string `json:"sensorName" bson:"sensorName"`
 	MaxTemp     int    `json:"maxTemp" bson:"maxTemp"`
 	MinTemp     int    `json:"minTemp" bson:"minTemp"`
 	Notify      int    `json:"notify" bson:"notify"`
@@ -48,6 +47,8 @@ func main() {
 	app.Get("/hospitals", getHospitals)
 	app.Post("/hospital", newHospital)
 	app.Put("/hospital", changeHospitalName)
+
+	app.Put("/group/:hospitalId", addGroup)
 
 	app.Get("/temp", getAllTemp)
 	app.Get("/temp/:sensorId", getSensorTemp)
@@ -89,8 +90,6 @@ func changeHospitalName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
 
-	fmt.Println("hospitalID =", changeName.HospitalID)
-
 	updateResult, err := hospitalCollection.UpdateOne(
 		c.Context(),
 		bson.M{"hospitalId": changeName.HospitalID},
@@ -103,6 +102,28 @@ func changeHospitalName(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"update hospital name complete": updateResult})
+}
+
+func addGroup(c *fiber.Ctx) error {
+	collection := mg.Db.Collection("hospitals")
+
+	addGroup := new(group)
+	if err := c.BodyParser(addGroup); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
+	}
+
+	filter := bson.M{"hospitalId": c.Params("hospitalId")}
+
+	updateResult, err := collection.UpdateOne(c.Context(),
+		filter,
+		bson.M{
+			"$push": bson.M{"groupSensor": addGroup},
+		},
+	)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
+	}
+	return c.JSON(fiber.Map{"Matched Document": updateResult.MatchedCount})
 }
 
 func getSensorTemp(c *fiber.Ctx) error {
