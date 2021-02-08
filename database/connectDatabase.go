@@ -2,8 +2,11 @@ package connectdatabase
 
 import (
 	"context"
+	"log"
+	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -18,8 +21,13 @@ var Mg mongoInstance
 
 // Connect to mongo database
 func Connect() error {
-	const dbName = "thermotify"
-	const mongoURI = "mongodb://localhost:27017/" + dbName
+
+	err := godotenv.Load(".env")
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+	mongoURI := os.Getenv("MONGO_URI")
+	dbName := os.Getenv("DB_NAME")
 
 	// create connect mongo
 	client, err := mongo.NewClient(options.Client().ApplyURI(mongoURI))
