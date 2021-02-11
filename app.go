@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
@@ -25,20 +26,21 @@ type group struct {
 }
 
 type sensor struct {
-	SensorID    string `json:"sensorId" bson:"sensorId"`
-	SensorToken string `json:"sensorToken" bson:"sensorToken"`
-	SensorName  string `json:"sensorName" bson:"sensorName"`
-	MaxTemp     int    `json:"maxTemp" bson:"maxTemp"`
-	MinTemp     int    `json:"minTemp" bson:"minTemp"`
-	Notify      int    `json:"notify" bson:"notify"`
-	AcceptData  int    `json:"acceptData" bson:"acceptData"`
+	SensorID      string  `json:"sensorId" bson:"sensorId"`
+	SensorToken   string  `json:"sensorToken" bson:"sensorToken"`
+	SensorName    string  `json:"sensorName" bson:"sensorName"`
+	MaxTemp       float64 `json:"maxTemp" bson:"maxTemp"`
+	MinTemp       float64 `json:"minTemp" bson:"minTemp"`
+	Notify        int     `json:"notify" bson:"notify"`
+	AcceptData    int     `json:"acceptData" bson:"acceptData"`
+	CurrentStatus string  `json:"currentStatus" bson:"acceptData"`
 }
 
 type tempValues struct {
-	SensorToken string `json:"sensorToken"`
-	Time        uint32 `json:"time,omitempty"`
-	Temp        int    `json:"temp"`
-	Status      string `json:"status"`
+	SensorToken string  `json:"sensorToken"`
+	Time        uint32  `json:"time,omitempty"`
+	Temp        float64 `json:"temp"`
+	Status      string  `json:"status"`
 }
 
 var mg = connectdatabase.Mg
@@ -60,8 +62,8 @@ func main() {
 
 	app.Post("/sensor/:groupId", addSensor)
 
-	app.Get("/temp", getAllTemp)
-	app.Get("/temp/:sensorToken", getTemp)
+	// app.Get("/temp", getAllTemp)
+	// app.Get("/temp/:sensorToken", getTemp)
 	app.Post("/temp", addTemp)
 
 	app.Listen(":80")
@@ -207,20 +209,58 @@ func getAllTemp(c *fiber.Ctx) error {
 
 func addTemp(c *fiber.Ctx) error {
 	temp := new(tempValues)
-
 	// parse json to struct
 	if err := c.BodyParser(&temp); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
 
-	temp.Time = uint32(time.Now().Unix())        // current time
-	collection := mg.Db.Collection("tempValues") // choose collection
-	insertResult, err := collection.InsertOne(c.Context(), temp)
+	temp.Status = checkStatus(temp.SensorToken, temp.Temp) // set status
+	temp.Time = uint32(time.Now().Unix())                  // current time
+
+	// insert temp to tempValues collection
+	tempCollection := mg.Db.Collection("tempValues") // choose collection
+	_, err := tempCollection.InsertOne(c.Context(), temp)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
+		return c.Status(fiber.StatusInternalServerError).JSON(
+			fiber.Map{"err": "can not insert temp into tempValues collection"})
 	}
 
-	return c.JSON(fiber.Map{"insert temp complete": insertResult.InsertedID})
+	return c.JSON(fiber.Map{"complete": "insert temp successfully"})
+}
+
+func checkStatus(sensorToken string, temp float64) (status string) {
+	var threshold struct {
+		Min           float64 `bson:"minTemp"`
+		Max           float64 `bson:"maxTemp"`
+		CurrentStatus string  `bson:"currentStatus"`
+	}
+
+	collection := mg.Db.Collection("sensors")
+	filter := bson.M{"sensorToken": sensorToken}
+
+	if err := collection.FindOne(context.TODO(), filter).Decode(&threshold); err != nil {
+		log.Fatal("err ", err)
+	}
+
+	// check temp are not out of threshold
+	if temp >= threshold.Max || temp <= threshold.Min {
+		status = "bad"
+	} else {
+		status = "good"
+	}
+
+	// check for current status must be change
+	if threshold.CurrentStatus != status {
+		_, err := collection.UpdateOne(context.TODO(),
+			filter,
+			bson.M{"$set": bson.M{"currentStatus": status}})
+		if err != nil {
+			log.Fatal("err ", err)
+		}
+	}
+
+	// return status
+	return
 }
 
 func find(collection string, filter bson.M, c *fiber.Ctx) error {
@@ -233,6 +273,8 @@ func find(collection string, filter bson.M, c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
+	defer cursor.Close(c.Context())
+
 	var data []bson.M
 	if err = cursor.All(c.Context(), &data); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
