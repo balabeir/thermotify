@@ -8,25 +8,26 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 
 	connectdatabase "thermotify/database"
 )
 
 type hospital struct {
-	HospitalID   string   `json:"hospitalId" bson:"hospitalId" `
+	HospitalID   string   `json:"_id,omitempty" bson:"_id,omitempty"`
 	HospitalName string   `json:"hospitalName,omitempty" bson:"hospitalName"`
 	SensorGroup  []string `json:"sensorGroup,omitempty" bson:"sensorGroup,omitempty"`
 }
 
 type group struct {
-	GroupID    string   `json:"groupId" bson:"groupId"`
+	GroupID    string   `json:"_id" bson:"_id"`
 	GroupName  string   `json:"groupName" bson:"groupName"`
 	LineToken  string   `json:"lineToken,omitempty" bson:"lineToken,omitempty"`
 	SensorList []string `json:"sensorList,omitempty" bson:"sensorList,omitempty"`
 }
 
 type sensor struct {
-	SensorID      string  `json:"sensorId" bson:"sensorId"`
+	SensorID      string  `json:"_id" bson:"_id"`
 	SensorToken   string  `json:"sensorToken" bson:"sensorToken"`
 	SensorName    string  `json:"sensorName" bson:"sensorName"`
 	MaxTemp       float64 `json:"maxTemp" bson:"maxTemp"`
@@ -58,9 +59,9 @@ func main() {
 	app.Post("/hospital", newHospital)
 	// app.Put("/hospital", changeHospitalName)
 
-	app.Post("/group/:hospitalId", addGroup)
-
-	app.Post("/sensor/:groupId", addSensor)
+	hospitalGroup := app.Group("/:hospitalId")
+	hospitalGroup.Post("/group", addGroup)
+	hospitalGroup.Post("/:groupId/sensor", addSensor)
 
 	// app.Get("/temp", getAllTemp)
 	// app.Get("/temp/:sensorToken", getTemp)
@@ -83,6 +84,7 @@ func newHospital(c *fiber.Ctx) error {
 	if err := c.BodyParser(newHospital); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
+	newHospital.HospitalID = primitive.NewObjectID().Hex()
 
 	// insert new hospital
 	insertResult, err := hospitalCollection.InsertOne(c.Context(), newHospital)
@@ -126,14 +128,14 @@ func addGroup(c *fiber.Ctx) error {
 	hospitalsCollection := mg.Db.Collection("hospitals")
 
 	// check hospitalId is exist
-	isexist := bson.M{"hospitalId": hospitalID}
+	isexist := bson.M{"_id": hospitalID}
 	if count, _ := hospitalsCollection.CountDocuments(c.Context(), isexist); count == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(
 			fiber.Map{"err": "this hospitalID is not exist"})
 	}
 
 	// add new group to hospitals collection
-	filter := bson.M{"hospitalId": hospitalID}
+	filter := bson.M{"_id": hospitalID}
 	_, err := hospitalsCollection.UpdateOne(c.Context(),
 		filter,
 		bson.M{
@@ -165,14 +167,14 @@ func addSensor(c *fiber.Ctx) error {
 	groupsCollection := mg.Db.Collection("groups")
 
 	// check hospitalId is exist
-	isexist := bson.M{"groupId": groupID}
+	isexist := bson.M{"_id": groupID}
 	if count, _ := groupsCollection.CountDocuments(c.Context(), isexist); count == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(
 			fiber.Map{"err": "this groupID is not exist"})
 	}
 
 	// add new sensor to groups collection
-	filter := bson.M{"groupId": groupID}
+	filter := bson.M{"_id": groupID}
 	_, err := groupsCollection.UpdateOne(c.Context(),
 		filter,
 		bson.M{
