@@ -14,27 +14,27 @@ import (
 )
 
 type hospital struct {
-	HospitalID   string   `json:"_id,omitempty" bson:"_id,omitempty"`
-	HospitalName string   `json:"hospitalName,omitempty" bson:"hospitalName"`
+	HospitalID   string   `json:"hospitalID,omitempty" bson:"_id"`
+	HospitalName string   `json:"hospitalName" bson:"hospitalName"`
 	SensorGroup  []string `json:"sensorGroup,omitempty" bson:"sensorGroup,omitempty"`
 }
 
 type group struct {
-	GroupID    string   `json:"_id" bson:"_id"`
+	GroupID    string   `json:"groupID,omitempty" bson:"_id"`
 	GroupName  string   `json:"groupName" bson:"groupName"`
 	LineToken  string   `json:"lineToken,omitempty" bson:"lineToken,omitempty"`
 	SensorList []string `json:"sensorList,omitempty" bson:"sensorList,omitempty"`
 }
 
 type sensor struct {
-	SensorID      string  `json:"_id" bson:"_id"`
+	SensorID      string  `json:"sensorID,omitempty" bson:"_id"`
 	SensorToken   string  `json:"sensorToken" bson:"sensorToken"`
 	SensorName    string  `json:"sensorName" bson:"sensorName"`
 	MaxTemp       float64 `json:"maxTemp" bson:"maxTemp"`
 	MinTemp       float64 `json:"minTemp" bson:"minTemp"`
 	Notify        int     `json:"notify" bson:"notify"`
 	AcceptData    int     `json:"acceptData" bson:"acceptData"`
-	CurrentStatus string  `json:"currentStatus" bson:"acceptData"`
+	CurrentStatus string  `json:"currentStatus,omitempty" bson:"currentStatus"`
 }
 
 type tempValues struct {
@@ -59,9 +59,8 @@ func main() {
 	app.Post("/hospital", newHospital)
 	// app.Put("/hospital", changeHospitalName)
 
-	hospitalGroup := app.Group("/:hospitalId")
-	hospitalGroup.Post("/group", addGroup)
-	hospitalGroup.Post("/:groupId/sensor", addSensor)
+	app.Post("/group/:hospitalId", addGroup)
+	app.Post("/sensor/:groupId", addSensor)
 
 	// app.Get("/temp", getAllTemp)
 	// app.Get("/temp/:sensorToken", getTemp)
@@ -84,15 +83,16 @@ func newHospital(c *fiber.Ctx) error {
 	if err := c.BodyParser(newHospital); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
+	// assume _id is hospitalID
 	newHospital.HospitalID = primitive.NewObjectID().Hex()
 
 	// insert new hospital
-	insertResult, err := hospitalCollection.InsertOne(c.Context(), newHospital)
+	_, err := hospitalCollection.InsertOne(context.Background(), newHospital)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(err.Error())
 	}
 
-	return c.JSON(fiber.Map{"Insert successfully": insertResult.InsertedID})
+	return c.JSON(fiber.Map{"complete": newHospital})
 }
 
 func changeHospitalName(c *fiber.Ctx) error {
@@ -105,7 +105,7 @@ func changeHospitalName(c *fiber.Ctx) error {
 	}
 
 	updateResult, err := hospitalCollection.UpdateOne(
-		c.Context(),
+		context.Background(),
 		bson.M{"hospitalId": changeName.HospitalID},
 		bson.M{
 			"$set": bson.M{"hospitalName": changeName.HospitalName},
@@ -124,19 +124,22 @@ func addGroup(c *fiber.Ctx) error {
 	if err := c.BodyParser(newGroup); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
-
 	hospitalsCollection := mg.Db.Collection("hospitals")
 
 	// check hospitalId is exist
-	isexist := bson.M{"_id": hospitalID}
-	if count, _ := hospitalsCollection.CountDocuments(c.Context(), isexist); count == 0 {
+	existFilter := bson.M{"_id": hospitalID}
+	if err := fieldIsExist(hospitalsCollection.Name(), existFilter); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(
 			fiber.Map{"err": "this hospitalID is not exist"})
 	}
 
+	newGroup.GroupID = primitive.NewObjectID().Hex()
+
 	// add new group to hospitals collection
+	groupsCollection := mg.Db.Collection("groups")
 	filter := bson.M{"_id": hospitalID}
-	_, err := hospitalsCollection.UpdateOne(c.Context(),
+	_, err := hospitalsCollection.UpdateOne(
+		context.Background(),
 		filter,
 		bson.M{
 			"$push": bson.M{"sensorGroup": newGroup.GroupID},
@@ -148,13 +151,12 @@ func addGroup(c *fiber.Ctx) error {
 	}
 
 	// add new group to groups collection
-	groupsCollection := mg.Db.Collection("groups")
-	_, err = groupsCollection.InsertOne(c.Context(), newGroup)
+	_, err = groupsCollection.InsertOne(context.Background(), newGroup)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(
 			fiber.Map{"err": "can not add this group into groups collection"})
 	}
-	return c.JSON(fiber.Map{"complete": "add this group successfully"})
+	return c.JSON(fiber.Map{"complete": newGroup})
 }
 
 func addSensor(c *fiber.Ctx) error {
@@ -167,15 +169,18 @@ func addSensor(c *fiber.Ctx) error {
 	groupsCollection := mg.Db.Collection("groups")
 
 	// check hospitalId is exist
-	isexist := bson.M{"_id": groupID}
-	if count, _ := groupsCollection.CountDocuments(c.Context(), isexist); count == 0 {
+	existFilter := bson.M{"_id": groupID}
+	if err := fieldIsExist(groupsCollection.Name(), existFilter); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(
-			fiber.Map{"err": "this groupID is not exist"})
+			fiber.Map{"err": "this hospitalID is not exist"})
 	}
+
+	newSensor.SensorID = primitive.NewObjectID().Hex()
+	newSensor.CurrentStatus = "init"
 
 	// add new sensor to groups collection
 	filter := bson.M{"_id": groupID}
-	_, err := groupsCollection.UpdateOne(c.Context(),
+	_, err := groupsCollection.UpdateOne(context.Background(),
 		filter,
 		bson.M{
 			"$push": bson.M{"sensorList": newSensor.SensorID},
@@ -188,12 +193,12 @@ func addSensor(c *fiber.Ctx) error {
 
 	// add new sensor to sensors collection
 	sensorsCollection := mg.Db.Collection("sensors")
-	_, err = sensorsCollection.InsertOne(c.Context(), newSensor)
+	_, err = sensorsCollection.InsertOne(context.Background(), newSensor)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(
 			fiber.Map{"err": "can not add this sensor into sensors collection"})
 	}
-	return c.JSON(fiber.Map{"complete": "add this sensor successfully"})
+	return c.JSON(fiber.Map{"complete": newSensor})
 }
 
 func getTemp(c *fiber.Ctx) error {
@@ -221,13 +226,23 @@ func addTemp(c *fiber.Ctx) error {
 
 	// insert temp to tempValues collection
 	tempCollection := mg.Db.Collection("tempValues") // choose collection
-	_, err := tempCollection.InsertOne(c.Context(), temp)
+	_, err := tempCollection.InsertOne(context.Background(), temp)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(
 			fiber.Map{"err": "can not insert temp into tempValues collection"})
 	}
 
-	return c.JSON(fiber.Map{"complete": "insert temp successfully"})
+	return c.JSON(fiber.Map{"complete": temp})
+}
+
+// Sub function
+
+func fieldIsExist(collectionName string, filter bson.M) error {
+	collection := mg.Db.Collection(collectionName)
+	if count, err := collection.CountDocuments(context.Background(), filter); count == 0 {
+		return err
+	}
+	return nil
 }
 
 func checkStatus(sensorToken string, temp float64) (status string) {
@@ -271,14 +286,14 @@ func find(collection string, filter bson.M, c *fiber.Ctx) error {
 	// filter := bson.M{"hospitalId": "111111"}
 	findFilter := filter
 
-	cursor, err := dbCollection.Find(c.Context(), findFilter)
+	cursor, err := dbCollection.Find(context.Background(), findFilter)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
-	defer cursor.Close(c.Context())
+	defer cursor.Close(context.Background())
 
 	var data []bson.M
-	if err = cursor.All(c.Context(), &data); err != nil {
+	if err = cursor.All(context.Background(), &data); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(err.Error())
 	}
 	return c.JSON(data)
